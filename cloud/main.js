@@ -12,39 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Welcome! This migration script helps you handle common tasks in a Parse
-// migration. This main.js helps you use two different goals:
-// 1. Migrate a ParseObject to Firebase (on demand or automatically)
-//    This is achieved with both an afterSave trigger and a cloud function "migrate"
-//    which takes a "class" parameter and an "objectId" or "objectIds" parameter.
-// 2. Optionally make the app read-only. This helps if you don't want to worry
-//    about your initial sync overwriting a live migration.
+// Welcome, this tool helps you completely migrate your data to Firebase by just
+// providing a single callback per class. If you deploy this cloud code, you'll automatically start
+// syncing objects to Firebase as they are written. To sync old objects, you should schedule
+// "importToFirebase" to run every 15 minutes in the Jobs dashboard for your app.
+// (Parse Cloud Jobs are only allowed to run for 15 minutes, so this job runs for ~14.5m
+// and resumes its import task every time it is rescheduled)
 //
-// CAUTION! The Parse CLI *must* deploy both Cloud Code and Parse Hosting for all deploys.
-// PLEASE make sure you copy any website code to the public directory or you will wipe
-// away your website when you use this.
-
-// CONFIG SECTION:
-// When this is set, writes will fail. Use this if you are using an initial sync
-// and it doesn't take care to avoid overwriting your continuous sync.
-var MAKE_APP_READ_ONLY = false;
-
-// If MAKE_APP_READ_ONLY is true, this must include the list of Parse subclasses.
-// You can use either a true class (e.g. Parse.Installation) or a string
-// ("_Installation)
-var ALL_CLASSES = [Parse.User, Parse.Installation];
-
-// If you have a version of your app that already has the Firebase SDK, it can do
-// migrations for you. This is the list of minimum versions which will *not* be
-// migrated.
-// Note: this strategy depends on the ParseInstallation. If you do not use Installations,
-// all versions will be migrated.
-var DO_NOT_MIGRATE_VERSIONS = {
-  // "myapp.ios": "1.2.3"
-};
-
-// Call this with a callback for each class you'd like to migrate. The callback accepts
-// a ParseObject and may return a promise.
+// *********************************************************
+// WARNING: Parse does not let you deploy only Cloud Code. If you use Parse Hosting, please make sure
+// you have the latest copy of your website in a `public` folder. If you forget, use `parse rollback`
+// to revert both this code and the fact that you blew away your website.
+// ********************************************************
+//
+// To register a class to be migrated, call addMigration after it is defiend. You pass a callback that
+// accepts a Parse.Object and returns a Promise.
 // e.g.:
 // addMigration("Record", function(record) {
 //   return Parse.Cloud.httpRequest({
@@ -60,6 +42,10 @@ var DO_NOT_MIGRATE_VERSIONS = {
 // Note: it's very likely your data model will look different in Parse and Firebase. If you
 //   choose to save multiple paths to Firebase, you can use Pasre.Promise.when to return a Promise
 //   that waits for all of them to finish.
+//
+// If you've chosen to do a gradual migration and have an app that is double-writing to both Parse and Firebase,
+// you can set 'migratedToFirebase' to 1 to prevent it from doing the extra work of a migration server-side
+// as well.
 var CLASS_MIGRATIONS = {};
 function addMigration(klass, callback) {
   if (typeof klass === "string") {
@@ -69,115 +55,111 @@ function addMigration(klass, callback) {
   }
 }
 
+// An overly simplistic migration implementation. Isn't handling pointers etc.:
+var myFirebaseDatabase = "";
+function moveTo(klass) {
+  return function(object) {
+    var endpoint = klass + "/" + object.id + ".json";
+    return Parse.Cloud.httpRequest({
+      "method": "PUT",
+      "url": "https://" + myFirebaseDatabase + ".firebaseio.com/" + endpoint,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": JSON.stringify(object)
+    });
+  }
+}
+
 // MANAGED CODE SECTION; you shouldn't need to touch anything below this line:
 var _ = require('underscore');
 
-// Task 1: making an app read-only:
-if (MAKE_APP_READ_ONLY) {
-  _.each(ALL_CLASSES, function(klass) {
-    Parse.Cloud.beforeSave(klass, function(req, resp) {
-      resp.error("Sorry, we are currently performing scheduled maintenance.");
-    })
-  });
-}
-
-// Task 2: making an app do live migrations
-function versionCompare(left, right) {
-  var leftSplit = _.split(left);
-  var rightSplit = _.split(right);
-  var i = 0;
-  while (true) {
-    if (i >= leftSplit.length || i >= rightSplit.length) {
-      return leftSplit.length - rightSplit.length;
-    }
-    if (leftSplit[i] < rightSplit[i]) {
-      return -1
-    } else if (leftSplit[i] > rightSplit[i]) {
-      return 1
-    }
-  }
-}
-
-function needsMigration(installationId) {
-  if (!installationId) {
-    console.log("No InstallationId; migrating to be safe");
-    return Parse.Promise.as(true);
-  }
-
-  console.log("Checking whether installationId " + installationId + " needs migration");
-  var query = (new Parse.Query(Parse.Installation));
-  return query.get(installationId).then(function(installation) {
-    var version = installation.get("appVersion");
-    var appName = installation.get("appName");
-    if (!version || !appName) {
-      console.log("Installation does not have built-in fields 'appVersion' and 'appName'" +
-                  " this typically means the SDK is very old. Migrating to be safe");
-      return true;
-    }
-    var migratedVersion = DO_NOT_MIGRATE_VERSION[appName];
-    if (!migratedVersion) {
-      console.log("warning: do not know a version for the app " + appName +
-                  " that is already migrated. Migrating to be safe");
-      return true;
-    }
-    return 0 < versionCompare(version, migratedVersion);
-  }, function(error) {
-    if (error.code == 101) {
-      // Object not found; the app doesn't save Installations for this client
-      // (most commonly the JS SDK)
-      console.log("Installation " + installationId + " does not have an actual " +
-                  "Installation object; migrating to be safe");
-      return Parse.Promise.as(true);
-    }
-    console.error("Unexpected error: " + JSON.stringify(error));
-  });
-}
-
+// To ensure the app migrates its data only once, we use a migratedToFirebase
+// key to make sure we call the migration function on every update while also
+// doing a backfill. This is GoodEnough (TM) for most people, but there's a
+// possible race condition where an intial import is sent at the same time as
+// a record update. If you need protection against this, make sure your migration
+// function uses a transaction in Fireabse.
 _.each(CLASS_MIGRATIONS, function(migration, klass) {
-  Parse.Cloud.afterSave(klass, function(req, resp) {
-    return needsMigration(req.installationId).then(function(doesNeed) {
-      if (doesNeed) {
-        return migration(req.object);
-      }
+  Parse.Cloud.beforeSave(klass, function(req, resp) {
+    // Prevent infinite loops from the initial import:
+    var changed = req.object.dirtyKeys();
+    if (changed.length === 1 && changed[0] === "migratedToFirebase") {
+      resp.success();
+      return;
+    }
+
+    // Don't write with the key "undefined" when an object is new. Will be
+    // picked up by job.
+    if (req.object.isNew()) {
+      resp.success();
+      return;
+    }
+
+    // Using Parse.Promise.as here lets us handle the result of migration() correctly
+    // whether it is a Promise or not.
+    return Parse.Promise.as(migration(req.object))
+    .then(function() {
+      req.object.set("migratedToFirebase", 1);
+      resp.success(req.object);
+    }, function(error) {
+      resp.error(error);
     });
   });
 });
 
-// 3. Define a migration function. This is used if you want to scan across your app and force
-//    a migration. BE CAREFUl in this case that your migration function checks to avoid blowing
-//    away newer data or put your app in read-only mode.
-Parse.Cloud.define("migrate", function(req, resp) {
-  var klass = req.params['class'];
-  if (!klass) {
-    resp.error("Missing mandatory param 'class'");
-    return;
-  }
-  var query = new Parse.Query(klass);
+// Cloud Code is allowed to run for 15m. Shut down after 14.5 to avoid
+// unclean termination.
+var MAXIMUM_DURATION = 14.5 * 60 * 1000;
+var BATCH_SIZE = 1000;
+Parse.Cloud.job("importToFirebase", function(request, status) {
+  var deadline = new Date() + MAXIMUM_DURATION;
 
-  if (req.params.objectId) {
-    query = query.equalTo("objectId", req.params.objectId);
-  } else if (req.params.objectIds) {
-    console.log("Migrating " + JSON.stringify(req.params.objectIds));
-    query = query.containedIn("objectId", req.params.objectIds);
-  } else {
-    resp.error("Must provide param objectId or [objectIds]");
-    return;
-  }
-
-  var allPromises = [];
-  query.each(function(obj) {
-    console.log("Migrating ", obj.id);
-    allPromises.push(CLASS_MIGRATIONS[klass](obj));
-  }).then(function() {;
-    // Black magic: we could return the promise from the migration in the function above,
-    //  but that forces all requests to happen in sequence. This trick lets us issue requests
-    // to Firebase as fast as we can receive them. When we're done *sending* requests, we
-    // know what all requests are but have not necessarily finished them all. This lets us
-    // wait until all requests are done.
-    return Parse.Promise.when(allPromises)
-  }).then(function() {
-    resp.success({});
+  var lastMigration = Parse.Promise.as();
+  _.each(CLASS_MIGRATIONS, function(migration, klass) {
+    lastMigration = lastMigration.then(function() {
+      console.log("Starting migration of class " + klass);
+      migrateClass(klass, migration, deadline, status);
+    });
+  });
+  lastMigration.then(function() {
+    console.log("Done with initial sync!");
+    status.success();
   }, function(error) {
-    resp.error(error);
+    status.error(error)
   });
 });
+
+function migrateClass(klass, migration, deadline, status) {
+  if (Date.now() > deadline) {
+    console.log("Shutting down to avoid unclean exit from Parse Cloud Jobs");
+    return Parse.Promise.as();
+  }
+  var query = new Parse.Query(klass)
+    .notEqualTo("migratedToFirebase", 1)
+    .limit(BATCH_SIZE)
+    .addAscending("objectId")
+  var migrated = 0;
+
+  return query.find().then(function(objects) {
+    migrated = objects.length;
+    var migrations = _.map(objects, function(object) {
+      return Parse.Promise.as(migration(object)).then(function() {
+        object.set("migratedToFirebase", 1);
+        return object.save();
+      });
+    });
+    return Parse.Promise.when(migrations).then(function() {
+      console.log("Migrated " + migrations + " " + klass + " records");
+    });
+
+  }).then(function(migrated) {
+    // Recursion is the for loop of async.
+    if (migrated == BATCH_SIZE) {
+      return migrateClass(klass, migration, deadline, status);
+    }
+    console.log("Done migrating " + klass + " class");
+  }, function(error) {
+    status.error(error);
+  });
+};
