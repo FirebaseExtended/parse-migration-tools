@@ -35,7 +35,7 @@ folder.
 
 Parse has not yet decided how they plan to migrate Parse Files to other
 backends
-([discussion](github.com/ParsePlatform/parse-server/wiki/Configuring-File-Adapters
+([discussion](https://github.com/ParsePlatform/parse-server/wiki/Configuring-File-Adapters
 )). When they do, we expect they will continue with their plan to
 support Google Cloud Storage.
 
