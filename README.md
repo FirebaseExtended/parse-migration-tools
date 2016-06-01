@@ -1,12 +1,13 @@
 # Mygration
 
 This is a set of code to help you think about migrating from Parse to Firebase.
-It is a personal project wholly owned by Google Inc, intended to
-compliment [Migrate to
-Firebase](https://events.google.com/io2016/schedule?sid=b4641ff7-0bef-e511-a517-00155d5066d7#day1/b4641ff7-0bef-e511-a517-00155d5066d7).
+It is a personal project wholly owned by Google Inc. It is intended to compliment the talk "Migrate to Firebase" from Google I/O and the Parse migration guide for Firebase. For additional information see:
 
-We intend to cover the following areas, though many changes won't be
-ready until after the talk.
+* [The talk](https://www.youtube.com/watch?v=RWM9J6Mvu-4) on YouTube
+* [The slides](https://migrateto.firebaseapp.io) on Firebase Hosting
+* The Parse migration Guide ([iOS](https://firebase.google.com/support/guides/parse-ios) or [Android](https://firebase.google.com/support/guides/parse-android))
+
+We intend to cover the following areas with code tools. Checked sections are ready for use:
 
 - [x] Migrate Parse Data to Firebase using Cloud Code.
 - [ ] Migrate Users from Parse Social to Firebase Auth client-side.
