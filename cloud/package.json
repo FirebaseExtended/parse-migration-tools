@@ -1,0 +1,18 @@
+{
+  "name": "mygration-cloud-code",
+  "version": "0.0.3",
+  "description": "Cloud code components for mygration. Node packages are only used for testing",
+  "dependencies": {},
+  "devDependencies": {
+    "chai": "^3.5.0",
+    "node-fetch": "^1.5.2",
+    "underscore": "^1.8.3",
+    "parse": "^1.8.5"
+  },
+  "scripts": {
+    "test": "mocha"
+  },
+  "author": "Thomas Bouldin",
+  "license": "Apache-2.0",
+  "private": true
+}

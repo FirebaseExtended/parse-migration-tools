@@ -2,6 +2,10 @@
 .parse.local
 .parse.project
 
+# Node (only used for unit testing. Cloud Code is not Node!)
+cloud/node_modules
+cloud/config.json
+
 # Xcode
 #
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
