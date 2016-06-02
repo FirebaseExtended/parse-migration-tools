@@ -23,7 +23,7 @@ natural Firebase structure would look, you can probably describe how an
 individual ParseObject would map to the Firebase Realtime
 Database. We offer two files to help you migrate from Parse:
 
- 1. `migrator.js` A tool that allows you two keep your existing Cloud Code *and* use Cloud Code to migrate data out of Parse.
+ 1. `migrator.js` A tool that allows you to keep your existing Cloud Code *and* use Cloud Code to migrate data out of Parse.
  2. `firebase-rest.js` A simple wrapper that helps you talk to Firebase in Cloud Code (where the Firebase Node module doesn't work).
  
 Imagine you have a `BlogPost` class in Parse with the following fields:
