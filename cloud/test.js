@@ -615,7 +615,7 @@ describe('migrator', function() {
         return Parse.Promise.when(fetchMigrated);
       }).then(function(objects) {
         _.each(objects, function(obj) {
-          assert.equal(obj.get(consts.MIGRATION_KEY), consts.IS_MIGRATED);
+          assert.equal(obj.get(consts.MIGRATION_KEY), consts.JUST_IMPORTED);
         });
       });
     });
