@@ -59,7 +59,7 @@ module.exports = {
   // that the object is migrated) but we might also want to set various
   // fields about the Firebase copy of the data. The first write after this
   // state skips a logical beforeSave trigger to avoid weird side effects.
-  JUST_IMPORTED: 4,
+  IMPORTED: 4,
 
   // The number of records that are queried at once in the migration job.
   // This is exported so it can be lowered in tests.

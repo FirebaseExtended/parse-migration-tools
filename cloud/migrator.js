@@ -129,8 +129,8 @@ Migrator.prototype.getBeforeSave = function(klass) {
     // See consts.js for a full explanation of the state machine.
     var changed = request.object.dirtyKeys();
     if (request.object.dirty(consts.MIGRATION_KEY) &&
-        request.object.get(consts.MIGRATION_KEY) === consts.JUST_IMPORTED) {
-        return;
+        request.object.get(consts.MIGRATION_KEY) === consts.IMPORTED) {
+        return _Promise.as();
     }
     var shouldBeforeSave = !_.isUndefined(beforeSave) &&
       !(changed.length === 1 && changed[0] === consts.MIGRATION_KEY);
@@ -253,14 +253,14 @@ Migrator.prototype.getBulkImport = function(klass) {
           return migrate(object);
         }).then(function(maybeChanged) {
           var ret = maybeChanged instanceof _Parse.Object ? maybeChanged : object;
-          ret.set(consts.MIGRATION_KEY, consts.JUST_IMPORTED);
+          ret.set(consts.MIGRATION_KEY, consts.IMPORTED);
           return ret;
         });
       });
     } else {
       migrations = bulkImport(objects).then(function(changed) {
         return _.map(changed, function(object) {
-          object.set(consts.MIGRATION_KEY, consts.JUST_IMPORTED);
+          object.set(consts.MIGRATION_KEY, consts.IMPORTED);
         });
       });
     }
@@ -348,7 +348,7 @@ Migrator.prototype._migrateClass = function(klass, bulkImport, deadline) {
         consts.IS_MIGRATED,
         consts.NEEDS_SECOND_PASS,
         consts.FINISHED_SECOND_PASS,
-        consts.JUST_IMPORTED
+        consts.IMPORTED
       ]
     ).limit(consts.BATCH_SIZE);
 
