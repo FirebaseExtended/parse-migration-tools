@@ -1,7 +1,7 @@
-# Mygration
+# Parse Migration Tools
 
 This is a set of code to help you think about migrating from Parse to Firebase.
-This is not an official Google product. This is an internal project intended to compliment the talk "Migrate to Firebase" from Google I/O and the Parse migration guide for Firebase. For additional information see:
+This project compliments the talk "Migrate to Firebase" from Google I/O and the Parse migration guide for Firebase. For additional information see:
 
 * [The talk](https://www.youtube.com/watch?v=RWM9J6Mvu-4) on YouTube
 * [The slides](https://migrateto.firebaseapp.io) on Firebase Hosting
