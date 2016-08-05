@@ -229,7 +229,7 @@ Migrator.prototype.getAfterDelete = function(klass) {
 // importer or the migration function. Any changes made by the import function
 // plus a change to the object's migration state are applied to the objects,
 // which are saved back in bulk.
-// Returns the number of objects imported.
+// The function it creates returns the number of objects imported.
 Migrator.prototype.getBulkImport = function(klass) {
   var migrate = this.handlers(klass).migrateObject,
     bulkImport = this.handlers(klass).bulkImport,
@@ -259,7 +259,7 @@ Migrator.prototype.getBulkImport = function(klass) {
       });
     } else {
       migrations = bulkImport(objects).then(function(changed) {
-        return _.map(changed, function(object) {
+        return _.each(changed, function(object) {
           object.set(consts.MIGRATION_KEY, consts.IMPORTED);
         });
       });
@@ -270,12 +270,7 @@ Migrator.prototype.getBulkImport = function(klass) {
       for (var start = 0; start < objects.length; start += consts.SAVE_BATCH_SIZE) {
         var slice = objects.slice(start, start + consts.SAVE_BATCH_SIZE);
         saveBack = saveBack.then(function() {
-          var p = new _Promise();
-          _Parse.Object.saveAll(slice, {
-            success: function() { p.resolve() },
-            error: function(err) { p.reject(err) }
-          });
-          return p;
+          return _Parse.Object.saveAll(slice);
         });
       }
       return saveBack.then(function() {
