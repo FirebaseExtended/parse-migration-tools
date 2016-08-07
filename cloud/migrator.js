@@ -65,6 +65,7 @@ var Migrator = function(Parse) {
   // create jobs/functions.
   this.migrateObject = this._registerFn("migrateObject");
   this.migrateDelete = this._registerFn("migrateDelete");
+  this.bulkImport = this._registerFn("bulkImport");
 
   this._parse = Parse;
 };
@@ -121,11 +122,16 @@ Migrator.prototype.getBeforeSave = function(klass) {
 
   return function(request, response) {
     var obj;
-    // Skip beforeSave if it doesn't exist or if this is just
-    // a quick second pass to keep people from worrying about not having
-    // an objectId in their migration. See consts.js for a full explanation
-    // of the state machine.
+    // Reasons to skip the logical beforeSave:
+    // * it isn't defined (only migration is)
+    // * we are skipping it because we needed a 2-pass migration for a new object
+    // * we are skipping everything because we made changes for the import job
+    // See consts.js for a full explanation of the state machine.
     var changed = request.object.dirtyKeys();
+    if (request.object.dirty(consts.MIGRATION_KEY) &&
+        request.object.get(consts.MIGRATION_KEY) === consts.IMPORTED) {
+        return _Promise.as();
+    }
     var shouldBeforeSave = !_.isUndefined(beforeSave) &&
       !(changed.length === 1 && changed[0] === consts.MIGRATION_KEY);
 
@@ -156,10 +162,8 @@ Migrator.prototype.getBeforeSave = function(klass) {
       }
       return _Promise.as().then(function() {
         return migrate && migrate(obj);
-      }).then(function() {
-        // migration functions shouldn't change the object or it will
-        // behave weirdly between beforeSave and the migration job.
-        return obj;
+      }).then(function(maybeNew) {
+        return maybeNew instanceof _Parse.Object ? maybeNew : obj;
       });
 
     }).then(function() {
@@ -221,6 +225,62 @@ Migrator.prototype.getAfterDelete = function(klass) {
   }
 };
 
+// Get bulk import returns a function that runs either the user's explicit
+// importer or the migration function. Any changes made by the import function
+// plus a change to the object's migration state are applied to the objects,
+// which are saved back in bulk.
+// The function it creates returns the number of objects imported.
+Migrator.prototype.getBulkImport = function(klass) {
+  var migrate = this.handlers(klass).migrateObject,
+    bulkImport = this.handlers(klass).bulkImport,
+      _Promise = this._parse.Promise;
+      _Parse = this._parse;
+
+  if (_.isUndefined(migrate) && _.isUndefined(bulkImport)) {
+    return undefined;
+  }
+
+  return function(objects) {
+    var migrations;
+    if (_.isUndefined(bulkImport)) {
+      // If the user has not defined a bulkImport method, we first let them run their
+      // migration methods in parallel. After they all complete, we batch the saves
+      // in a Parse.Object.saveAll request. We sequence these methods because saveAll
+      // counts in Parse as N requests and a parallel save is likely to make customers
+      // hit their throughput limit.
+      migrations = _.map(objects, function(object) {
+        return _Promise.as().then(function() {
+          return migrate(object);
+        }).then(function(maybeChanged) {
+          var ret = maybeChanged instanceof _Parse.Object ? maybeChanged : object;
+          ret.set(consts.MIGRATION_KEY, consts.IMPORTED);
+          return ret;
+        });
+      });
+    } else {
+      migrations = bulkImport(objects).then(function(changed) {
+        return _.each(changed, function(object) {
+          object.set(consts.MIGRATION_KEY, consts.IMPORTED);
+        });
+      });
+    }
+
+    return _Promise.when(migrations).then(function(objects) {
+      var saveBack = _Promise.as();
+      for (var start = 0; start < objects.length; start += consts.SAVE_BATCH_SIZE) {
+        var slice = objects.slice(start, start + consts.SAVE_BATCH_SIZE);
+        saveBack = saveBack.then(function() {
+          return _Parse.Object.saveAll(slice);
+        });
+      }
+      return saveBack.then(function() {
+        return objects.length;
+      });
+    });
+  }
+};
+
+
 Migrator.prototype.getImportJob = function() {
   var self = this,
     _Promise = this._parse.Promise;
@@ -231,8 +291,9 @@ Migrator.prototype.getImportJob = function() {
     console.log("Starting import pass");
     var totalMigrated = 0;
     _.each(self._triggers, function(handlers, klass) {
-      if (_.isUndefined(handlers.migrateObject)) {
-        console.log(klass + " has no migration function; nothing to import");
+      var importer = self.getBulkImport(klass);
+      if (_.isUndefined(importer)) {
+        console.log(klass + " has no migration or bulkImport function; nothing to import");
         return;
       } else {
         console.log("Will import class " +  klass);
@@ -241,7 +302,7 @@ Migrator.prototype.getImportJob = function() {
       lastMigration = lastMigration.then(function(migrated) {
         totalMigrated += migrated;
         console.log("Starting import of class " + klass);
-        return self._migrateClass(klass, handlers.migrateObject);
+        return self._migrateClass(klass, importer);
       });
     });
     return lastMigration.then(function(migrated) {
@@ -260,7 +321,7 @@ Migrator.prototype.getImportJob = function() {
   }
 };
 
-Migrator.prototype._migrateClass = function(klass, migration, deadline) {
+Migrator.prototype._migrateClass = function(klass, bulkImport, deadline) {
   var self = this,
     _Promise = this._parse.Promise;
   if (Date.now() > deadline) {
@@ -278,27 +339,19 @@ Migrator.prototype._migrateClass = function(klass, migration, deadline) {
   var query = new self._parse.Query(klass)
     .notContainedIn(
       consts.MIGRATION_KEY,
-      [consts.IS_MIGRATED, consts.NEEDS_SECOND_PASS, consts.FINISHED_SECOND_PASS]
+      [
+        consts.IS_MIGRATED,
+        consts.NEEDS_SECOND_PASS,
+        consts.FINISHED_SECOND_PASS,
+        consts.IMPORTED
+      ]
     ).limit(consts.BATCH_SIZE);
 
   // For each batch, map that batch to a migration of a single record and
   // then setting that record's migration status to done. Then wait for
   // that batch to complete before resolving the outer promise that lets
   // us fetch a new batch.
-  return query.find().then(function(objects) {
-    var migrations = _.map(objects, function(object) {
-      return _Promise.as().then(function() {
-        return migration(object);
-      }).then(function() {
-        object.set(consts.MIGRATION_KEY, consts.IS_MIGRATED);
-        return object.save();
-      });
-    });
-    return _Promise.when(migrations).then(function() {
-      return migrations.length;
-    });
-
-  }).then(function(migrated) {
+  return query.find().then(bulkImport).then(function(migrated) {
     // We know we've migrated everything when the last batch didn't hit our limit.
     // Otherwise, recursion is the for loop of async.
     if (migrated === consts.BATCH_SIZE) {
