@@ -316,7 +316,7 @@ Migrator.prototype.getImportJob = function() {
       status.success(message);
       return totalMigrated;
     }, function(error) {
-      return status.error(error)
+      return status.error(error.toString())
     });
   }
 };
