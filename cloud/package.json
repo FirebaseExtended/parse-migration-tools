@@ -5,12 +5,13 @@
   "dependencies": {},
   "devDependencies": {
     "chai": "^3.5.0",
+    "mocha": "^3.1.2",
     "node-fetch": "^1.5.2",
-    "underscore": "^1.8.3",
-    "parse": "^1.8.5"
+    "parse": "^1.9.2",
+    "underscore": "^1.8.3"
   },
   "scripts": {
-    "test": "mocha"
+    "test": "./node_modules/.bin/mocha"
   },
   "author": "Thomas Bouldin",
   "license": "Apache-2.0",

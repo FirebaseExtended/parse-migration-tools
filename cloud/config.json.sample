@@ -6,5 +6,6 @@
   "parse": {
     "app_id": "This is the Parse App ID and is only needed for testing. This should not be your prod app",
     "api_key": "This is the Parse JavaScript Key and is only needed for testing. This should not be your prod app"
+    "master_key": "This is the Parse Master Key and is only needed for testing. This should not be your prod app"
   }
 }

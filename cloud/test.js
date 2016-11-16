@@ -31,7 +31,7 @@ var consts = require('./consts');
 var _ = require('underscore');
 
 var Parse = require('parse/node');
-Parse.initialize(config.parse.app_id, config.parse.api_key);
+Parse.initialize(config.parse.app_id, config.parse.api_key, config.parse.master_key);
 
 // Patch Parse.Cloud to include an httpRequest object like it does in Cloud Code.
 var fetch = require('node-fetch');
@@ -66,6 +66,9 @@ function randomRef() {
 }
 
 describe('firebase-rest', function() {
+  // This suite uses network requests; allow a long timeout.
+  this.timeout(60000);
+
   it('should create proper URLs', function() {
     var url = "https://myapp.firebaseio.com"
     var ref = Firebase({url: url});
@@ -579,6 +582,9 @@ describe('migrator', function() {
   });
 
   describe('migration job (smoke test)', function() {
+    // one minute timeout. This is doing actual network requests
+    this.timeout(60000);
+
     var saveBatchSize, importBatchSize, testCases;
     var classNames = [];
     var numClassNames = 2;
@@ -638,6 +644,10 @@ describe('migrator', function() {
         migrator.afterSave(klass, calledAfterSave);
       });
 
+      _.each(objects, function(object) {
+        object.setACL(config.acl);
+      });
+
       return Parse.Object.saveAll(objects).then(function() {
         return migrator.getImportJob()(undefined, response);
       }).then(function(migrated) {
@@ -649,20 +659,75 @@ describe('migrator', function() {
       });
     };
 
-    it('should handle batchImport', function() {
-      var migratedLatch = {};
-      var importedLatch = {};
-      var importedObjectIds = {};
+    var publicACL = new Parse.ACL();
+    publicACL.setPublicReadAccess(true);
+    publicACL.setPublicWriteAccess(true);
+    var privateACL = new Parse.ACL();
+    privateACL.setPublicReadAccess(false);
+    privateACL.setPublicWriteAccess(false);
+    var cases = {'(public data)': publicACL, '(needs master key)': privateACL};
 
-      runTest({
-        setup: function(migrator) {
-          _.each(numClassNames, function(klass) {
-            migratedLatch[klass] = latch();
-            importedLatch[klass] = latch();
+    _.each(cases, function(acl, aclCase) {
+      it('should handle batchImport ' + aclCase, function() {
+        var migratedLatch = {};
+        var importedLatch = {};
+        var importedObjectIds = {};
 
-            migrator.migrateObject(klass, migratedLatch[klass]);
-            migrator.bulkImport(klass, function(objects) {
-              _.each(objects, function(object) {
+        runTest({
+          acl: acl,
+          setup: function(migrator) {
+            _.each(numClassNames, function(klass) {
+              migratedLatch[klass] = latch();
+              importedLatch[klass] = latch();
+
+              migrator.migrateObject(klass, migratedLatch[klass]);
+              migrator.bulkImport(klass, function(objects) {
+                _.each(objects, function(object) {
+                  if (obj.get('testCase') === 0) {
+                    migratedLatch[klass].assertFalse(); // only migrate once
+                    migratedLatch[klass]();
+                  }
+                  assert.equal(obj.get('condition'), 'not_migrated');
+                  ids = migratedObjectIds[klass] || [];
+                  ids.push(obj.id);
+                  migratedObjectIds[klass] = ids;
+                });
+                return objects;
+              });
+            });
+          },
+          check: function() {
+            migratedLatch[classNameA].assertTrue();
+            migratedLatch[classNameB].assertTrue();
+            var fetchMigrated = _.map(migratedObjectIds, function(ids, klass) {
+              var objs = _.map(ids, function(id) {
+                var obj = new Parse.Object(klass)
+                obj.id = id;
+              });
+              return Parse.Object.fetchAll(objs);
+            });
+            return Parse.Promise.when(fetchMigrated).then(function(migrated) {
+              return _.flatten(migrated);
+            }).then(function(objects) {
+              _.each(objects, function(obj) {
+                assert.equal(obj.get(consts.MIGRATION_KEY), consts.IMPORTED);
+              });
+            });
+          }
+        });
+      });
+
+      it('should be able to import with migrateObject ' + aclCase, function() {
+        var migratedLatch = {};
+        var migratedObjectIds = {};
+
+        runTest({
+          acl: acl,
+          setup: function(migrator) {
+            _.each(numClassNames, function(klass) {
+              migratedLatch[klass] = latch();
+
+              migrator.migrateObject(klass, function(obj) {
                 if (obj.get('testCase') === 0) {
                   migratedLatch[klass].assertFalse(); // only migrate once
                   migratedLatch[klass]();
@@ -672,70 +737,27 @@ describe('migrator', function() {
                 ids.push(obj.id);
                 migratedObjectIds[klass] = ids;
               });
-              return objects;
             });
-          });
-        },
-        check: function() {
-          migratedLatch[classNameA].assertTrue();
-          migratedLatch[classNameB].assertTrue();
-          var fetchMigrated = _.map(migratedObjectIds, function(ids, klass) {
-            var objs = _.map(ids, function(id) {
-              var obj = new Parse.Object(klass)
-              obj.id = id;
+          },
+          check: function() {
+            migratedLatch[classNameA].assertTrue();
+            migratedLatch[classNameB].assertTrue();
+            var fetchMigrated = _.map(migratedObjectIds, function(ids, klass) {
+              var objs = _.map(ids, function(id) {
+                var obj = new Parse.Object(klass)
+                obj.id = id;
+              });
+              return Parse.Object.fetchAll(objs);
             });
-            return Parse.Object.fetchAll(objs);
-          });
-          return Parse.Promise.when(fetchMigrated).then(function(migrated) {
-            return _.flatten(migrated);
-          }).then(function(objects) {
-            _.each(objects, function(obj) {
-              assert.equal(obj.get(consts.MIGRATION_KEY), consts.IMPORTED);
+            return Parse.Promise.when(fetchMigrated).then(function(migrated) {
+              return _.flatten(migrated);
+            }).then(function(objects) {
+              _.each(objects, function(obj) {
+                assert.equal(obj.get(consts.MIGRATION_KEY), consts.IMPORTED);
+              });
             });
-          });
-        }
-      });
-    });
-
-    it('should be able to import with migrateObject', function() {
-      var migratedLatch = {};
-      var migratedObjectIds = {};
-
-      runTest({
-        setup: function(migrator) {
-          _.each(numClassNames, function(klass) {
-            migratedLatch[klass] = latch();
-
-            migrator.migrateObject(klass, function(obj) {
-              if (obj.get('testCase') === 0) {
-                migratedLatch[klass].assertFalse(); // only migrate once
-                migratedLatch[klass]();
-              }
-              assert.equal(obj.get('condition'), 'not_migrated');
-              ids = migratedObjectIds[klass] || [];
-              ids.push(obj.id);
-              migratedObjectIds[klass] = ids;
-            });
-          });
-        },
-        check: function() {
-          migratedLatch[classNameA].assertTrue();
-          migratedLatch[classNameB].assertTrue();
-          var fetchMigrated = _.map(migratedObjectIds, function(ids, klass) {
-            var objs = _.map(ids, function(id) {
-              var obj = new Parse.Object(klass)
-              obj.id = id;
-            });
-            return Parse.Object.fetchAll(objs);
-          });
-          return Parse.Promise.when(fetchMigrated).then(function(migrated) {
-            return _.flatten(migrated);
-          }).then(function(objects) {
-            _.each(objects, function(obj) {
-              assert.equal(obj.get(consts.MIGRATION_KEY), consts.IMPORTED);
-            });
-          });
-        }
+          }
+        });
       });
     });
   });

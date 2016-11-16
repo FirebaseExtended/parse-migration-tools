@@ -185,7 +185,7 @@ Migrator.prototype.getAfterSave = function(klass) {
         return _Promise.as();
       }
       obj.set(consts.MIGRATION_KEY, consts.NEEDS_SECOND_PASS);
-      return obj.save();
+      return obj.save({useMasterKey: true});
     }
 
   if (_.isUndefined(afterSave)) {
@@ -270,7 +270,7 @@ Migrator.prototype.getBulkImport = function(klass) {
       for (var start = 0; start < objects.length; start += consts.SAVE_BATCH_SIZE) {
         var slice = objects.slice(start, start + consts.SAVE_BATCH_SIZE);
         saveBack = saveBack.then(function() {
-          return _Parse.Object.saveAll(slice);
+          return _Parse.Object.saveAll(slice, {useMasterKey: true});
         });
       }
       return saveBack.then(function() {
@@ -351,7 +351,7 @@ Migrator.prototype._migrateClass = function(klass, bulkImport, deadline) {
   // then setting that record's migration status to done. Then wait for
   // that batch to complete before resolving the outer promise that lets
   // us fetch a new batch.
-  return query.find().then(bulkImport).then(function(migrated) {
+  return query.find({useMasterKey: true}).then(bulkImport).then(function(migrated) {
     // We know we've migrated everything when the last batch didn't hit our limit.
     // Otherwise, recursion is the for loop of async.
     if (migrated === consts.BATCH_SIZE) {
