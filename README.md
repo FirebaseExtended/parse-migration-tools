@@ -1,5 +1,15 @@
 # Parse Migration Tools
 
+## Status
+
+![Status: Archived](https://img.shields.io/badge/Status-Archived-red)
+
+This library is no longer actively maintained. We **do not recommend** using this library in production.
+
+If you maintain a fork of this library that you believe is healthier than the official version, we may consider recommending your fork.  Please open a Pull Request if you believe that is the case.
+
+## Introduction
+
 This is a set of code to help you think about migrating from Parse to Firebase.
 This project complements the talk "Migrate to Firebase" from Google I/O and the Parse migration guide for Firebase. For additional information see:
 
